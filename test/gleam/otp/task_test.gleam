@@ -1,6 +1,7 @@
-import gleeunit/should
-import gleam/otp/task.{Timeout}
+import gleam/option.{None, Some}
 import gleam/erlang/process.{type Pid}
+import gleam/otp/task.{Timeout}
+import gleeunit/should
 
 @external(erlang, "gleam_otp_test_external", "flush")
 fn flush() -> Nil
@@ -11,11 +12,15 @@ fn get_message_queue_length(pid pid: Pid) -> Int
 @external(erlang, "timer", "sleep")
 fn sleep(a: Int) -> Nil
 
-fn work(x) {
+fn work_for(x, s: Int) {
   fn() {
-    sleep(15)
+    sleep(s)
     x
   }
+}
+
+fn work(x) {
+  work_for(x, 15)
 }
 
 pub fn async_await_test() {
@@ -94,6 +99,38 @@ pub fn async_await_forever_unmonitor_test() {
     task.async(work(1))
     |> task.try_await_forever
 
+  // Mailbox should be empty;
+  // no "DOWN" message should have been sent
+  process.self()
+  |> get_message_queue_length
+  |> should.equal(0)
+}
+
+pub fn shutdown_test() {
+  // Start with an empty mailbox
+  flush()
+
+  // Set shutdown timeout to much longer than the work
+  let result = task.async(work_for(1, 10))
+    |> task.try_shutdown(50)
+
+  should.equal(result, Ok(Some(1)))
+  
+  // Mailbox should be empty;
+  // no "DOWN" message should have been sent
+  process.self()
+  |> get_message_queue_length
+  |> should.equal(0)
+}
+
+pub fn shutdown_timeout_test() {
+  // Start with an empty mailbox
+  flush()
+
+  let result = task.async(work_for(1, 100)) |> task.try_shutdown(50)
+
+  should.equal(result, Ok(None))
+  
   // Mailbox should be empty;
   // no "DOWN" message should have been sent
   process.self()

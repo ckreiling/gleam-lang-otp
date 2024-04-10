@@ -27,8 +27,9 @@
 ////
 
 // TODO: await_many
-import gleam/erlang/process.{type Pid, type ProcessMonitor, type Selector}
 import gleam/dynamic.{type Dynamic}
+import gleam/erlang/process.{type Pid, type ProcessMonitor, type Selector}
+import gleam/option.{type Option}
 
 pub opaque type Task(value) {
   Task(
@@ -148,4 +149,56 @@ pub fn try_await_forever(task: Task(value)) -> Result(value, AwaitError) {
 pub fn await_forever(task: Task(value)) -> value {
   let assert Ok(value) = try_await_forever(task)
   value
+}
+
+/// Gracefully shutdown a task.
+///
+/// This function will attempt to wait for the task to complete, returning the task's value. If the
+/// task crashes, this function returns the error.
+///
+/// If the timeout is reached before the task completes, the task is killed and this function returns `Ok(None)`.
+pub fn try_shutdown(
+  task: Task(value),
+  timeout: Int,
+) -> Result(Option(value), Dynamic) {
+  case try_await(task, timeout) {
+    Ok(result) -> Ok(option.Some(result))
+    Error(Exit(reason)) -> Error(reason)
+    Error(Timeout) -> {
+      brutal_kill(task)
+      Ok(option.None)
+    }
+  }
+}
+
+/// Shutdown a task.
+///
+/// If the task completes, this function returns the task's value. If the timeout is reached,
+/// the task is killed and this function returns `None`.
+///
+/// If the task process crashes, then this function crashes.
+pub fn shutdown(task: Task(value), timeout: Int) -> Option(value) {
+  let assert Ok(result) = try_shutdown(task, timeout)
+  result
+}
+
+/// Kill a task immediately without awaiting its completion.
+///
+/// This function unlinks the owner process from the task before killing it, ensuring
+/// the owner does not crash.
+pub fn brutal_kill(task: Task(value)) -> Nil {
+  assert_owner(task)
+  process.demonitor_process(task.monitor)
+  process.unlink(task.pid)
+  process.kill(task.pid)
+}
+
+/// Get the underlying PID of a task.
+pub fn pid(task: Task(value)) -> Pid {
+  task.pid
+}
+
+/// Get the owner of a task.
+pub fn owner(task: Task(value)) -> Pid {
+  task.owner
 }
